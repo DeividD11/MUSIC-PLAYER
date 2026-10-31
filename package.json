@@ -1,0 +1,10 @@
+{
+  "name": "music-player-static",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reproductor musical estático con Supabase",
+  "scripts": {
+    "test": "node tests/smoke-check.mjs"
+  }
+}

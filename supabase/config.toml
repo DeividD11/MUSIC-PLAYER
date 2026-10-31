@@ -1,0 +1,4 @@
+project_id = "qbmhcudgtjooyyegdhkk"
+
+[functions.music-api]
+verify_jwt = false
