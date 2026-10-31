@@ -143,21 +143,12 @@ export class AppController {
         this.songs = remoteSongs.songs;
         this.remoteOffset = remoteSongs.offset || 0;
         this.remoteHasMore = Boolean(remoteSongs.has_more);
+        // Keep device-local tracks local. Never create remote metadata rows implicitly.
+        const remoteById = new Map(remoteSongs.songs.map((song) => [song.id, song]));
+        this.songs = [...remoteSongs.songs, ...localSongs.filter((song) => !remoteById.has(song.id))];
         for (const localSong of localSongs) {
-          if (remoteIds.has(localSong.id)) {
-            const remote = this.songs.find((song) => song.id === localSong.id);
-            if (remote) await this.repository.saveSong({ ...localSong, ...remote });
-          } else {
-            try {
-              const created = await ApiClient.call('library.create', {
-                id: localSong.id, title: localSong.title, artist: localSong.artist, album: localSong.album,
-                genre: localSong.genre, duration_seconds: localSong.duration_seconds, source_type: 'local',
-                mime_type: localSong.mime_type, file_size_bytes: localSong.file_size_bytes,
-                original_file_name: localSong.original_file_name, metadata: localSong.metadata || {},
-              });
-              this.songs.push({ ...created.song, source_type: 'local' });
-            } catch { this.songs.push(localSong); }
-          }
+          const remote = remoteById.get(localSong.id);
+          if (remote) await this.repository.saveSong({ ...localSong, ...remote, source_type: remote.source_type });
         }
         this.playlists = remoteLists.playlists;
         const knownPlaylistIds = new Set(this.playlists.map((item) => item.id));
@@ -268,6 +259,7 @@ export class AppController {
       if (action === 'playlist-add' && song) { await this._addToFirstPlaylist(song); return; }
       if (action === 'upload' && song) { await this._uploadSong(song); return; }
       if (action === 'delete-song' && song) { await this._deleteSong(song); return; }
+      if (action === 'delete-cloud-song' && song) { await this._deleteCloudSong(song); return; }
       if (action === 'edit-song' && song) { await this._editSong(song); return; }
       if (action === 'open-playlist') { this.selectedPlaylistId = actionNode.dataset.playlistId; this._renderPlaylists(); return; }
       if (action === 'play-playlist') { const list = this.playlists.find((item) => item.id === actionNode.dataset.playlistId); await this._playPlaylist(list); return; }
@@ -355,7 +347,7 @@ export class AppController {
         const id = crypto.randomUUID();
         let song = {
           id,
-          title: tags.title || titleFromFileName(file.name),
+          title: titleFromFileName(file.name),
           artist: tags.artist || '', album: tags.album || '', genre: tags.genre || '',
           duration_seconds: duration || null, source_type: 'local', audio_path: null, cover_path: null,
           mime_type: file.type, file_size_bytes: file.size, original_file_name: file.name,
@@ -403,6 +395,18 @@ export class AppController {
     if (!this.user) throw new Error('Inicia sesión para subir archivos a tu almacenamiento privado.');
     const blob = await this.repository.getAudio(song.id);
     if (!blob) throw new Error('El archivo local ya no está disponible.');
+    // Create only the selected track's remote metadata before uploading its binary.
+    if (song.source_type !== 'storage') {
+      const created = await ApiClient.call('library.create', {
+        id: song.id, title: song.title, artist: song.artist || '', album: song.album || '',
+        genre: song.genre || '', duration_seconds: song.duration_seconds || null,
+        source_type: 'local', mime_type: song.mime_type || blob.type,
+        file_size_bytes: blob.size, original_file_name: song.original_file_name || '',
+        metadata: song.metadata || {},
+      });
+      Object.assign(song, created.song);
+      song.source_type = 'local';
+    }
     const upload = await ApiClient.call('library.upload-url', {
       kind: 'audio', file_name: song.original_file_name || `${song.title}.audio`,
       mime_type: song.mime_type || blob.type, file_size_bytes: blob.size,
@@ -416,6 +420,22 @@ export class AppController {
     await this.repository.saveSong(song);
     this._renderAll();
     toast('Canción subida y vinculada a tu cuenta.', 'success');
+  }
+
+  async _deleteCloudSong(song) {
+    if (!this.user || song.source_type !== 'storage') throw new Error('Esta canción no está guardada en la nube.');
+    if (!window.confirm(`¿Eliminar “${song.title}” del almacenamiento en la nube? Se conservará el archivo local si existe.`)) return;
+    await ApiClient.call('library.delete', { id: song.id });
+    const localBlob = await this.repository.getAudio(song.id).catch(() => null);
+    if (localBlob) {
+      song.source_type = 'local'; song.audio_path = null;
+      await this.repository.saveSong(song);
+    } else {
+      await this.repository.deleteSong(song.id);
+      this.songs = this.songs.filter((item) => item.id !== song.id);
+    }
+    this._renderAll();
+    toast('Eliminada de la nube.', 'success');
   }
 
   async _deleteSong(song) {

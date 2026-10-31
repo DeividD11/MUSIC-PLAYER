@@ -101,6 +101,7 @@ export class AppView {
       actions.append(play, queue, playNext, favorite);
       if (allowPlaylistAdd) actions.append(actionButton('playlist-add', song, 'Agregar a una playlist', '▦'));
       if (user && song.source_type === 'local') actions.append(actionButton('upload', song, 'Subir a tu almacenamiento privado', '☁'));
+      if (user && song.source_type === 'storage') actions.append(actionButton('delete-cloud-song', song, 'Eliminar solo de la nube', '☁×', { className: 'subtle-action' }));
       if (allowReorder && playlistId) {
         const up = actionButton('move-playlist-song', song, 'Mover canción hacia arriba', '↑', { disabled: songIndex === 0 });
         up.dataset.direction = 'up';
